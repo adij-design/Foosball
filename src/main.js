@@ -14,11 +14,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 const uid = "p_" + crypto.getRandomValues(new Uint32Array(1))[0].toString(36);
-let mode = "ai", room = "", score = [0, 0], ball = { x: 600, y: 300, vx: 4, vy: 2 }, rods = [180, 300, 420, 280, 320, 180, 300, 420];
+let mode = "ai", room = "", score = [0, 0], ball = { x: 600, y: 300, vx: 4, vy: 2 }, rods = [180, 300, 420, 280, 320, 180, 300, 420], roomHostId = "", isAuthority = false;
 const rodXs = [145, 275, 405, 535, 665, 795, 925, 1055];
 const playerOffsets = [[-48, 0, 48], [-36, 36], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-36, 36], [-48, 0, 48]];
 const rodTeams = ["blue", "blue", "red", "blue", "red", "blue", "red", "red"];
-let raf = 0, dragging = false, lastY = 0, remoteGame = null, gameOver = false, lastFrame = 0, ballInPlay = false, ballTouched = false, touchCount = 0, lastNudge = 0, audioCtx = null, lastTouchSound = 0;
+let raf = 0, dragging = false, lastY = 0, remoteGame = null, gameOver = false, lastFrame = 0, ballInPlay = false, ballTouched = false, touchCount = 0, lastNudge = 0, audioCtx = null, lastTouchSound = 0, lastPublish = 0;
 
 const root = document.querySelector("#app");
 root.innerHTML = `<main><header><div class="brand"><span class="mark">✦</span><div><b>FOOSBALL</b><small>ARENA</small></div></div><div class="status"><i></i><span id="net">CONNECTING…</span></div></header><section class="hero"><div><p class="eyebrow">ARCADE TABLE // 01</p><h1>Own the<br><em>table.</em></h1><p class="sub">Play locally, or share a room code<br>to challenge a friend.</p></div><div class="ball-art">⚽</div></section><section class="cards"><button class="mode active" data-mode="ai"><span>◈</span><strong>VS AI</strong><small>Play instantly</small></button><button class="mode" data-mode="online"><span>◎</span><strong>ONLINE</strong><small>Create or join a room</small></button><button class="mode" data-mode="practice"><span>△</span><strong>PRACTICE</strong><small>No opponent</small></button></section><section class="match"><div><label>WIN CONDITION</label><div class="goals"><button data-goals="3">3</button><button class="selected" data-goals="5">5</button><button data-goals="7">7</button></div></div><div class="online-box" id="onlineBox"><input id="room" placeholder="ENTER CODE" maxlength="6" aria-label="Room code"><button id="create">CREATE ROOM</button><button id="join">JOIN ROOM</button></div><button class="play" id="play">PLAY NOW <span>→</span></button></section><p class="hint" id="roomHint">Choose ONLINE to create a room or join with a code.</p></main><div class="game hidden"><canvas id="canvas"></canvas><div class="hud"><button id="back">← MENU</button><div class="score"><span id="blue">0</span><small>—</small><span id="red">0</span></div><div class="round">FIRST TO <b id="target">5</b></div></div><div class="game-tip" id="gameTip">DRAG TO MOVE • TAP TO KICK</div></div>`;
@@ -41,13 +41,13 @@ document.querySelectorAll("[data-goals]").forEach(button => button.onclick = () 
 const cleanRoomCode = () => $("#room").value.trim().replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase();
 $("#create").onclick = () => {
   room = Math.random().toString(36).slice(2, 8).toUpperCase(); $("#room").value = room;
-  setNet("ROOM " + room); $("#roomHint").textContent = `Room ${room} created — share this code with your friend.`;
-  set(ref(db, `rooms/${room}/meta`), { status: "lobby", createdAt: Date.now(), maxScore: target }).catch(() => { $("#roomHint").textContent = `Room ${room} ready locally — Firebase write is unavailable.`; });
+  isAuthority = true; roomHostId = uid; setNet("ROOM " + room); $("#roomHint").textContent = `Room ${room} created — share this code with your friend.`;
+  set(ref(db, `rooms/${room}/meta`), { status: "lobby", hostId: uid, createdAt: Date.now(), maxScore: target }).catch(() => { $("#roomHint").textContent = `Room ${room} ready locally — Firebase write is unavailable.`; });
 };
 $("#join").onclick = () => {
   room = cleanRoomCode();
   if (room.length < 4) { $("#roomHint").textContent = "Enter a room code with at least 4 letters or numbers."; $("#room").focus(); return; }
-  setNet("ROOM " + room); $("#roomHint").textContent = `Joined room ${room} — press PLAY NOW.`;
+  isAuthority = false; setNet("ROOM " + room); $("#roomHint").textContent = `Joined room ${room} — press PLAY NOW.`;
 };
 $("#play").onclick = start;
 $("#back").onclick = () => { cancelAnimationFrame(raf); $(".game").classList.add("hidden"); $("main").classList.remove("hidden"); };
@@ -64,13 +64,15 @@ function start() {
 function connectRoom() {
   const gameRef = ref(db, `rooms/${room}/game`), playerRef = ref(db, `rooms/${room}/players/${uid}`);
   set(playerRef, { joinedAt: Date.now(), connected: true }).catch(() => { $("#gameTip").textContent = "Room is running locally — Firebase permissions blocked"; }); onDisconnect(playerRef).remove().catch(() => {});
-  onValue(gameRef, snapshot => { remoteGame = snapshot.val(); if (remoteGame?.score) score = remoteGame.score; if (remoteGame?.rods && remoteGame.writer !== uid) rods = remoteGame.rods; if (remoteGame?.ball && remoteGame.writer !== uid) { ball.x = remoteGame.ball.x * 1200; ball.y = remoteGame.ball.y * 600; } }, () => $("#gameTip").textContent = "Connection lost — continuing locally");
+  onValue(ref(db, `rooms/${room}/meta`), snapshot => { roomHostId = snapshot.val()?.hostId || roomHostId; isAuthority = roomHostId === uid; });
+  onValue(gameRef, snapshot => { remoteGame = snapshot.val(); if (isAuthority || !remoteGame) return; if (remoteGame.score) score = remoteGame.score; if (remoteGame.rods) rods = remoteGame.rods; if (remoteGame.ball) { ball.x = remoteGame.ball.x * 1200; ball.y = remoteGame.ball.y * 600; } ballInPlay = !!remoteGame.ballInPlay; ballTouched = !!remoteGame.ballTouched; }, () => $("#gameTip").textContent = "Connection lost — continuing locally");
 }
 function resize() { canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio; canvas.style.width = innerWidth + "px"; canvas.style.height = innerHeight + "px"; }
-function publish() { if (mode === "online" && room && navigator.onLine) update(ref(db, `rooms/${room}/game`), { score, rods, ball: { x: ball.x / 1200, y: ball.y / 600 }, ballInPlay, ballTouched, writer: uid, updatedAt: Date.now() }).catch(() => { $("#gameTip").textContent = "Room sync unavailable — playing locally"; }); }
+function publish(now = performance.now()) { if (mode === "online" && room && isAuthority && navigator.onLine && now - lastPublish > 50) { lastPublish = now; update(ref(db, `rooms/${room}/game`), { score, rods, ball: { x: ball.x / 1200, y: ball.y / 600 }, ballInPlay, ballTouched, writer: uid, updatedAt: Date.now() }).catch(() => { $("#gameTip").textContent = "Room sync unavailable — playing locally"; }); } }
 function loop(now = performance.now()) {
   if (gameOver) return;
   const dt = Math.min(2, Math.max(.5, (now - lastFrame) / 16.67)); lastFrame = now;
+  if (mode === "online" && !isAuthority) { draw(); raf = requestAnimationFrame(loop); return; }
   if (ballInPlay) { ball.x += ball.vx * dt; ball.y += ball.vy * dt; ball.vx *= Math.pow(.998, dt); ball.vy *= Math.pow(.998, dt); if (Math.hypot(ball.vx, ball.vy) < .08) { ball.vx = 0; ball.vy = 0; ballInPlay = false; } }
   if (!ballInPlay && now - lastNudge > 3000) { ballInPlay = true; ballTouched = false; lastNudge = now; ball.vx = (Math.random() > .5 ? 1 : -1) * 1.2; ball.vy = (Math.random() - .5) * 1.2; $("#gameTip").textContent = "BALL MOVING — HIT IT TO BUILD SPEED"; }
   if (ball.y < 92) { ball.y = 92; ball.vy = Math.abs(ball.vy); }
@@ -80,7 +82,7 @@ function loop(now = performance.now()) {
   const speed = Math.hypot(ball.vx, ball.vy);
   if (speed > 13) { ball.vx *= 13 / speed; ball.vy *= 13 / speed; }
   if (mode === "ai") { rods[5] += (ball.y - rods[5]) * .025; rods[6] += (ball.y - rods[6]) * .018; rods[7] += (ball.y - rods[7]) * .018; }
-  $("#blue").textContent = score[0]; $("#red").textContent = score[1]; draw(); publish(); raf = requestAnimationFrame(loop);
+  $("#blue").textContent = score[0]; $("#red").textContent = score[1]; draw(); publish(now); raf = requestAnimationFrame(loop);
 }
 function collideWithPlayers() {
   rodXs.forEach((x, i) => playerOffsets[i].forEach(offset => {
