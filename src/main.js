@@ -16,8 +16,8 @@ const db = getDatabase(app);
 const uid = "p_" + crypto.getRandomValues(new Uint32Array(1))[0].toString(36);
 let mode = "ai", room = "", score = [0, 0], ball = { x: 600, y: 300, vx: 4, vy: 2 }, rods = [180, 300, 420, 280, 320, 180, 300, 420];
 const rodXs = [145, 275, 405, 535, 665, 795, 925, 1055];
-const playerOffsets = [[-48, 0, 48], [-36, 36], [-72, -36, 0, 36, 72], [-48, 48], [-48, 48], [-72, -36, 0, 36, 72], [-36, 36], [-48, 0, 48]];
-const rodTeams = ["blue", "blue", "blue", "red", "blue", "red", "red", "red"];
+const playerOffsets = [[-48, 0, 48], [-36, 36], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-36, 36], [-48, 0, 48]];
+const rodTeams = ["blue", "blue", "red", "blue", "red", "blue", "red", "red"];
 let raf = 0, dragging = false, lastY = 0, remoteGame = null, gameOver = false, lastFrame = 0, ballInPlay = false, ballTouched = false, touchCount = 0, lastNudge = 0;
 
 const root = document.querySelector("#app");
