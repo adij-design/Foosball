@@ -18,7 +18,7 @@ let mode = "ai", room = "", score = [0, 0], ball = { x: 600, y: 300, vx: 4, vy: 
 const rodXs = [145, 275, 405, 535, 665, 795, 925, 1055];
 const playerOffsets = [[-48, 0, 48], [-36, 36], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-72, -36, 0, 36, 72], [-36, 36], [-48, 0, 48]];
 const rodTeams = ["blue", "blue", "red", "blue", "red", "blue", "red", "red"];
-let raf = 0, dragging = false, lastY = 0, remoteGame = null, gameOver = false, lastFrame = 0, ballInPlay = false, ballTouched = false, touchCount = 0, lastNudge = 0;
+let raf = 0, dragging = false, lastY = 0, remoteGame = null, gameOver = false, lastFrame = 0, ballInPlay = false, ballTouched = false, touchCount = 0, lastNudge = 0, audioCtx = null, lastTouchSound = 0;
 
 const root = document.querySelector("#app");
 root.innerHTML = `<main><header><div class="brand"><span class="mark">✦</span><div><b>FOOSBALL</b><small>ARENA</small></div></div><div class="status"><i></i><span id="net">CONNECTING…</span></div></header><section class="hero"><div><p class="eyebrow">ARCADE TABLE // 01</p><h1>Own the<br><em>table.</em></h1><p class="sub">Play locally, or share a room code<br>to challenge a friend.</p></div><div class="ball-art">⚽</div></section><section class="cards"><button class="mode active" data-mode="ai"><span>◈</span><strong>VS AI</strong><small>Play instantly</small></button><button class="mode" data-mode="online"><span>◎</span><strong>ONLINE</strong><small>Create or join a room</small></button><button class="mode" data-mode="practice"><span>△</span><strong>PRACTICE</strong><small>No opponent</small></button></section><section class="match"><div><label>WIN CONDITION</label><div class="goals"><button data-goals="3">3</button><button class="selected" data-goals="5">5</button><button data-goals="7">7</button></div></div><div class="online-box" id="onlineBox"><input id="room" placeholder="ENTER CODE" maxlength="6" aria-label="Room code"><button id="create">CREATE ROOM</button><button id="join">JOIN ROOM</button></div><button class="play" id="play">PLAY NOW <span>→</span></button></section><p class="hint" id="roomHint">Choose ONLINE to create a room or join with a code.</p></main><div class="game hidden"><canvas id="canvas"></canvas><div class="hud"><button id="back">← MENU</button><div class="score"><span id="blue">0</span><small>—</small><span id="red">0</span></div><div class="round">FIRST TO <b id="target">5</b></div></div><div class="game-tip" id="gameTip">DRAG TO MOVE • TAP TO KICK</div></div>`;
@@ -55,6 +55,7 @@ $("#back").onclick = () => { cancelAnimationFrame(raf); $(".game").classList.add
 const canvas = $("#canvas"), ctx = canvas.getContext("2d");
 function start() {
   if (mode === "online" && !room) { $("#roomHint").textContent = "Create a room or enter a room code before playing online."; $("#room").focus(); return; }
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume();
   $("main").classList.add("hidden"); $(".game").classList.remove("hidden");
   score = [0, 0]; gameOver = false; ballInPlay = false; ballTouched = false; touchCount = 0; lastFrame = performance.now(); lastNudge = lastFrame; ball = { x: 600, y: 300, vx: 0, vy: 0 }; resize(); $("#gameTip").textContent = "MOVE A ROD INTO THE BALL TO SERVE";
   if (mode === "online") connectRoom();
@@ -87,9 +88,16 @@ function collideWithPlayers() {
     if (distance > 0 && distance < minDistance) {
       const nx = dx / distance, ny = dy / distance, dot = ball.vx * nx + ball.vy * ny;
       ball.x = x + nx * minDistance; ball.y = py + ny * minDistance;
-      if (dot < 0 || !ballTouched) { touchCount++; const hitPower = Math.min(12, 3.5 + touchCount * .45 + Math.abs(dot) * 2.1); ball.vx = nx * hitPower + (rodTeams[i] === "blue" ? .7 : -.7); ball.vy = ny * hitPower; ballInPlay = true; ballTouched = true; lastNudge = performance.now(); $("#gameTip").textContent = `TOUCH ${touchCount} — SPEED ${hitPower.toFixed(1)}`; }
+      if (dot < 0 || !ballTouched) { touchCount++; const hitPower = Math.min(12, 3.5 + touchCount * .45 + Math.abs(dot) * 2.1); ball.vx = nx * hitPower + (rodTeams[i] === "blue" ? .7 : -.7); ball.vy = ny * hitPower; ballInPlay = true; ballTouched = true; lastNudge = performance.now(); if (performance.now() - lastTouchSound > 90) { playTouchSound(hitPower); lastTouchSound = performance.now(); } $("#gameTip").textContent = `TOUCH ${touchCount} — SPEED ${hitPower.toFixed(1)}`; }
     }
   }));
+}
+function playTouchSound(power) {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime, oscillator = audioCtx.createOscillator(), gain = audioCtx.createGain();
+  oscillator.type = "triangle"; oscillator.frequency.setValueAtTime(150 + power * 18, now); oscillator.frequency.exponentialRampToValueAtTime(70, now + .08);
+  gain.gain.setValueAtTime(.0001, now); gain.gain.exponentialRampToValueAtTime(.12, now + .006); gain.gain.exponentialRampToValueAtTime(.0001, now + .09);
+  oscillator.connect(gain).connect(audioCtx.destination); oscillator.start(now); oscillator.stop(now + .1);
 }
 function goal(team) {
   score[team] = Math.min(target, score[team] + 1);
