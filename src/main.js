@@ -20,12 +20,12 @@ const playerOffsets = [[-48, 0, 48], [-36, 36], [-72, -36, 0, 36, 72], [-48, 48]
 let raf = 0, dragging = false, lastY = 0, remoteGame = null, gameOver = false, lastFrame = 0;
 
 const root = document.querySelector("#app");
-root.innerHTML = `<main><header><div class="brand"><span class="mark">✦</span><div><b>FOOSBALL</b><small>ARENA</small></div></div><div class="status"><i></i><span id="net">CONNECTING…</span></div></header><section class="hero"><div><p class="eyebrow">ARCADE TABLE // 01</p><h1>Own the<br><em>table.</em></h1><p class="sub">Play locally, or share a room code<br>to challenge a friend.</p></div><div class="ball-art">⚽</div></section><section class="cards"><button class="mode active" data-mode="ai"><span>◈</span><strong>VS AI</strong><small>Play instantly</small></button><button class="mode" data-mode="online"><span>◎</span><strong>ONLINE</strong><small>Share a room code</small></button><button class="mode" data-mode="practice"><span>△</span><strong>PRACTICE</strong><small>No opponent</small></button></section><section class="match"><div><label>WIN CONDITION</label><div class="goals"><button data-goals="3">3</button><button class="selected" data-goals="5">5</button><button data-goals="7">7</button></div></div><div class="online-box" id="onlineBox"><input id="room" placeholder="ROOM CODE" maxlength="6" aria-label="Room code"><button id="join">JOIN / CREATE</button></div><button class="play" id="play">PLAY NOW <span>→</span></button></section><p class="hint">DRAG ON THE TABLE TO MOVE YOUR RODS • TAP TO KICK</p></main><div class="game hidden"><canvas id="canvas"></canvas><div class="hud"><button id="back">← MENU</button><div class="score"><span id="blue">0</span><small>—</small><span id="red">0</span></div><div class="round">FIRST TO <b id="target">5</b></div></div><div class="game-tip" id="gameTip">DRAG TO MOVE • TAP TO KICK</div></div>`;
+root.innerHTML = `<main><header><div class="brand"><span class="mark">✦</span><div><b>FOOSBALL</b><small>ARENA</small></div></div><div class="status"><i></i><span id="net">CONNECTING…</span></div></header><section class="hero"><div><p class="eyebrow">ARCADE TABLE // 01</p><h1>Own the<br><em>table.</em></h1><p class="sub">Play locally, or share a room code<br>to challenge a friend.</p></div><div class="ball-art">⚽</div></section><section class="cards"><button class="mode active" data-mode="ai"><span>◈</span><strong>VS AI</strong><small>Play instantly</small></button><button class="mode" data-mode="online"><span>◎</span><strong>ONLINE</strong><small>Create or join a room</small></button><button class="mode" data-mode="practice"><span>△</span><strong>PRACTICE</strong><small>No opponent</small></button></section><section class="match"><div><label>WIN CONDITION</label><div class="goals"><button data-goals="3">3</button><button class="selected" data-goals="5">5</button><button data-goals="7">7</button></div></div><div class="online-box" id="onlineBox"><input id="room" placeholder="ENTER CODE" maxlength="6" aria-label="Room code"><button id="create">CREATE ROOM</button><button id="join">JOIN ROOM</button></div><button class="play" id="play">PLAY NOW <span>→</span></button></section><p class="hint" id="roomHint">Choose ONLINE to create a room or join with a code.</p></main><div class="game hidden"><canvas id="canvas"></canvas><div class="hud"><button id="back">← MENU</button><div class="score"><span id="blue">0</span><small>—</small><span id="red">0</span></div><div class="round">FIRST TO <b id="target">5</b></div></div><div class="game-tip" id="gameTip">DRAG TO MOVE • TAP TO KICK</div></div>`;
 
 const $ = s => document.querySelector(s);
 let target = 5;
 const setNet = text => $("#net").textContent = text;
-onValue(ref(db, ".info/connected"), s => setNet(s.val() ? "FIREBASE CONNECTED" : "OFFLINE — LOCAL PLAY"));
+onValue(ref(db, ".info/connected"), s => setNet(s.val() ? "FIREBASE CONNECTED" : "OFFLINE — LOCAL PLAY"), () => setNet("FIREBASE RULES BLOCKED"));
 addEventListener("offline", () => setNet("OFFLINE — LOCAL PLAY"));
 
 document.querySelectorAll(".mode").forEach(button => button.onclick = () => {
@@ -37,17 +37,23 @@ document.querySelectorAll("[data-goals]").forEach(button => button.onclick = () 
   document.querySelectorAll("[data-goals]").forEach(x => x.classList.remove("selected"));
   button.classList.add("selected"); target = Number(button.dataset.goals); $("#target").textContent = target;
 });
+const cleanRoomCode = () => $("#room").value.trim().replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase();
+$("#create").onclick = () => {
+  room = Math.random().toString(36).slice(2, 8).toUpperCase(); $("#room").value = room;
+  setNet("ROOM " + room); $("#roomHint").textContent = `Room ${room} created — share this code with your friend.`;
+  set(ref(db, `rooms/${room}/meta`), { status: "lobby", createdAt: Date.now(), maxScore: target }).catch(() => { $("#roomHint").textContent = `Room ${room} ready locally — Firebase write is unavailable.`; });
+};
 $("#join").onclick = () => {
-  const input = $("#room");
-  room = input.value.trim().replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase() || Math.random().toString(36).slice(2, 8).toUpperCase();
-  input.value = room; setNet("ROOM " + room);
+  room = cleanRoomCode();
+  if (room.length < 4) { $("#roomHint").textContent = "Enter a room code with at least 4 letters or numbers."; $("#room").focus(); return; }
+  setNet("ROOM " + room); $("#roomHint").textContent = `Joined room ${room} — press PLAY NOW.`;
 };
 $("#play").onclick = start;
 $("#back").onclick = () => { cancelAnimationFrame(raf); $(".game").classList.add("hidden"); $("main").classList.remove("hidden"); };
 
 const canvas = $("#canvas"), ctx = canvas.getContext("2d");
 function start() {
-  if (mode === "online" && !room) $("#join").click();
+  if (mode === "online" && !room) { $("#roomHint").textContent = "Create a room or enter a room code before playing online."; $("#room").focus(); return; }
   $("main").classList.add("hidden"); $(".game").classList.remove("hidden");
   score = [0, 0]; gameOver = false; lastFrame = performance.now(); ball = { x: 600, y: 300, vx: 4, vy: 2 }; resize(); $("#gameTip").textContent = "DRAG TO MOVE • TAP TO KICK";
   if (mode === "online") connectRoom();
@@ -55,7 +61,7 @@ function start() {
 }
 function connectRoom() {
   const gameRef = ref(db, `rooms/${room}/game`), playerRef = ref(db, `rooms/${room}/players/${uid}`);
-  set(playerRef, { joinedAt: Date.now(), connected: true }); onDisconnect(playerRef).remove();
+  set(playerRef, { joinedAt: Date.now(), connected: true }).catch(() => { $("#gameTip").textContent = "Room is running locally — Firebase permissions blocked"; }); onDisconnect(playerRef).remove().catch(() => {});
   onValue(gameRef, snapshot => { remoteGame = snapshot.val(); if (remoteGame?.score) score = remoteGame.score; }, () => $("#gameTip").textContent = "Connection lost — continuing locally");
 }
 function resize() { canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio; canvas.style.width = innerWidth + "px"; canvas.style.height = innerHeight + "px"; }
